@@ -4,28 +4,57 @@ FROM python:3.11-slim
 # Set the working directory inside the container
 WORKDIR /app
 
-# Install system dependencies required for Chrome, its driver, and key management
+# Install system dependencies required for Chrome, ChromeDriver, and other tools
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     gnupg \
-    --no-install-recommends
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libc6 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libexpat1 \
+    libfontconfig1 \
+    libgbm1 \
+    libgcc1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Install the stable version of Google Chrome using the modern key management method
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+# Install Google Chrome (pinned version for stability)
+ARG CHROME_VERSION=126.0.6478.126-1
+RUN wget -q -O google-chrome.deb "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}_amd64.deb" \
     && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y ./google-chrome.deb \
+    && rm google-chrome.deb
 
-# Install the matching version of ChromeDriver
-RUN CHROME_DRIVER_VERSION=$(wget -q -O - "https://storage.googleapis.com/chrome-for-testing-public/LATEST_RELEASE_STABLE") \
-    && wget -q --continue -P /tmp "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_DRIVER_VERSION}/linux64/chromedriver-linux64.zip" \
-    && unzip /tmp/chromedriver-linux64.zip -d /tmp \
+# Install the matching ChromeDriver (pinned version)
+ARG CHROMEDRIVER_VERSION=126.0.6478.126
+RUN wget -q -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip" \
+    && unzip /tmp/chromedriver.zip -d /tmp \
     && mv /tmp/chromedriver-linux64/chromedriver /usr/bin/chromedriver \
     && chmod +x /usr/bin/chromedriver \
-    && rm -rf /tmp/chromedriver-linux64 /tmp/chromedriver-linux64.zip
+    && rm -rf /tmp/chromedriver-linux64 /tmp/chromedriver.zip
 
 # Copy the requirements file into the container
 COPY requirements.txt requirements.txt
@@ -39,5 +68,5 @@ COPY . .
 # Expose the port that the application will run on
 EXPOSE 8080
 
-# The command to run the application using Gunicorn, a production-ready web server
+# The command to run the application using Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "app:app"]
