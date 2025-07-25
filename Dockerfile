@@ -22,8 +22,10 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --d
 # Install the matching version of ChromeDriver
 RUN CHROME_DRIVER_VERSION=$(wget -q -O - "https://storage.googleapis.com/chrome-for-testing-public/LATEST_RELEASE_STABLE") \
     && wget -q --continue -P /tmp "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_DRIVER_VERSION}/linux64/chromedriver-linux64.zip" \
-    && unzip /tmp/chromedriver-linux64.zip -d /usr/bin \
-    && rm /tmp/chromedriver-linux64.zip
+    && unzip /tmp/chromedriver-linux64.zip -d /tmp \
+    && mv /tmp/chromedriver-linux64/chromedriver /usr/bin/chromedriver \
+    && chmod +x /usr/bin/chromedriver \
+    && rm -rf /tmp/chromedriver-linux64 /tmp/chromedriver-linux64.zip
 
 # Copy the requirements file into the container
 COPY requirements.txt requirements.txt
