@@ -27,6 +27,7 @@ def run_feedback_automation(index, rollno, password, status_queue):
     """
     Main function to orchestrate the feedback automation process.
     It reports its progress back to the main app via the status_queue.
+    Includes debugging steps like saving screenshots on failure.
     """
     browser = None
     try:
@@ -46,8 +47,9 @@ def run_feedback_automation(index, rollno, password, status_queue):
         browser.execute_script("arguments[0].click();", checkbox)
         login_button = browser.find_element(By.ID, "btnLogin")
         browser.execute_script("arguments[0].click();", login_button)
-
-        status_queue.put({"status": "running", "progress": 20, "message": "Navigating to feedback section..."})
+        
+        status_queue.put({"status": "running", "progress": 20, "message": "Login successful. Navigating dashboard..."})
+        
         feedback_card = wait.until(EC.element_to_be_clickable((By.XPATH, f"//h5[text()='Feedback']")))
         browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click();", feedback_card)
 
@@ -65,27 +67,44 @@ def run_feedback_automation(index, rollno, password, status_queue):
         status_queue.put({"status": "done", "progress": 100, "message": "Feedback submitted successfully!"})
 
     except TimeoutException as e:
-        status_queue.put({"status": "error", "message": f"Page or element not found: {e}. Please check credentials or website status."})
+        # Save debugging info if any timeout occurs
+        if browser:
+            browser.save_screenshot("debug_screenshot.png")
+            with open("debug_page_source.html", "w", encoding="utf-8") as f:
+                f.write(browser.page_source)
+        status_queue.put({"status": "error", "message": f"A timeout occurred: {e}. Check credentials or website status. Debug files saved locally."})
     except Exception as e:
         status_queue.put({"status": "error", "message": f"An unexpected error occurred: {str(e)}"})
     finally:
         if browser:
             browser.quit()
 
+
 def intermediate_form(browser, status_queue):
-    wait = WebDriverWait(browser, 10)
+    wait = WebDriverWait(browser, 15) # Slightly longer wait
     courses = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "intermediate-body")))
     if not courses:
         raise Exception("No intermediate feedback courses found.")
 
     num_courses = len(courses)
     for i in range(num_courses):
-        courses = browser.find_elements(By.CLASS_NAME, "intermediate-body")
+        courses = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "intermediate-body")))
         course_names = browser.find_elements(By.CSS_SELECTOR, "h6.course")
         progress = 30 + int(60 * (i / num_courses))
         status_queue.put({"status": "running", "progress": progress, "message": f"Processing: {course_names[i].text}"})
+        
         browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click();", courses[i])
-        questions_text = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.bottom-0"))).text
+        
+        try:
+            # This is the new debugging block. It waits for the question counter.
+            questions_text = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.bottom-0"))).text
+        except TimeoutException:
+            # If it fails, save a screenshot of the form itself.
+            browser.save_screenshot("debug_form_screenshot.png")
+            with open("debug_form_source.html", "w", encoding="utf-8") as f:
+                f.write(browser.page_source)
+            raise TimeoutException("Could not find the questions inside the feedback form. Debug files saved locally.")
+
         questions = int(questions_text.split()[-1])
         clicks = 0
         while clicks < questions:
@@ -95,10 +114,10 @@ def intermediate_form(browser, status_queue):
                 next_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@class='carousel-control-next']")))
                 browser.execute_script("arguments[0].click();", next_button)
                 clicks += 1
-                time.sleep(0.2)
+                time.sleep(0.3) # Slightly increased delay
             except StaleElementReferenceException:
                 continue
-        back_button = browser.find_element(By.CLASS_NAME, "overlay")
+        back_button = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "overlay")))
         browser.execute_script("arguments[0].click();", back_button)
         time.sleep(0.5)
 
@@ -115,8 +134,18 @@ def endsem_form(browser, status_queue):
         course_name = staff_list[i].find_element(By.CSS_SELECTOR, "span.ms-1").text
         progress = 30 + int(60 * (i / num_staff))
         status_queue.put({"status": "running", "progress": progress, "message": f"Processing: {course_name}"})
+        
         browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", staff_list[i])
-        wait.until(EC.presence_of_element_located((By.ID, "feedbackTableBody")))
+        
+        try:
+            # New debugging block for the end-sem form
+            wait.until(EC.presence_of_element_located((By.ID, "feedbackTableBody")))
+        except TimeoutException:
+            browser.save_screenshot("debug_form_screenshot.png")
+            with open("debug_form_source.html", "w", encoding="utf-8") as f:
+                f.write(browser.page_source)
+            raise TimeoutException("Could not find the feedback table. Debug files saved locally.")
+
         review_list = browser.find_elements(By.CSS_SELECTOR, "td.question-cell")
         for count in range(1, len(review_list) + 1):
             star_button = browser.find_element(By.XPATH, f"//tbody[@id='feedbackTableBody']/tr[{count}]/td[@class='rating-cell']/div[@class='star-rating']/label[{randint(1, 2)}]")
