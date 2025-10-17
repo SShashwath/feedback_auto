@@ -3,6 +3,7 @@ from flask_cors import CORS
 from rq.job import Job
 from worker import feedback_queue, redis_conn
 from feedback_automation import run_feedback_automation
+import time
 
 app = Flask(__name__)
 
@@ -96,7 +97,7 @@ def get_task_status(task_id):
                 "task_id": task_id,
                 "status": "queued",
                 "progress": 10,
-                "message": f"Waiting in queue (position: {position + 1})",
+                "message": f"Waiting in queue (position: {position + 1 if position is not None else 'N/A'})",
                 "queue_position": position + 1 if position is not None else None
             })
         
@@ -115,6 +116,60 @@ def get_task_status(task_id):
         }), 404
 
 
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """
+    Health check endpoint to verify Redis connection.
+    """
+    try:
+        redis_conn.ping()
+        return jsonify({
+            "status": "healthy",
+            "redis": "connected",
+            "timestamp": time.time()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "redis": str(e),
+            "timestamp": time.time()
+        }), 500
+
+
+@app.route("/api/keep-alive", methods=["GET"])
+def keep_alive():
+    """
+    Keep-alive endpoint for cron jobs to prevent Render free tier from sleeping.
+    Also provides system status information.
+    """
+    try:
+        # Check Redis connection
+        redis_conn.ping()
+        
+        # Get queue statistics
+        queue_stats = {
+            "queued": len(feedback_queue),
+            "failed": len(feedback_queue.failed_job_registry),
+            "finished": len(feedback_queue.finished_job_registry),
+            "started": len(feedback_queue.started_job_registry)
+        }
+        
+        return jsonify({
+            "status": "alive",
+            "message": "Service is running",
+            "redis": "connected",
+            "queue_stats": queue_stats,
+            "timestamp": time.time()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "degraded",
+            "message": f"Service running but Redis unreachable: {str(e)}",
+            "timestamp": time.time()
+        }), 200  # Still return 200 to keep service awake
+
+
 @app.route("/api/queue-stats", methods=["GET"])
 def get_queue_stats():
     """
@@ -129,18 +184,6 @@ def get_queue_stats():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/health", methods=["GET"])
-def health_check():
-    """
-    Health check endpoint to verify Redis connection.
-    """
-    try:
-        redis_conn.ping()
-        return jsonify({"status": "healthy", "redis": "connected"}), 200
-    except Exception as e:
-        return jsonify({"status": "unhealthy", "redis": str(e)}), 500
 
 
 if __name__ == "__main__":
