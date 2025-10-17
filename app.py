@@ -1,97 +1,147 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from threading import Thread
-import queue
-import uuid
-
-# Import the core automation logic
+from rq.job import Job
+from worker import feedback_queue, redis_conn
 from feedback_automation import run_feedback_automation
 
 app = Flask(__name__)
 
-# IMPORTANT: Configured CORS to allow requests from your Vercel frontend.
+# CORS configuration for your Vercel frontend
 CORS(app, resources={r"/api/*": {"origins": "https://easy-college.vercel.app"}})
 
-
-# In-memory storage for task statuses.
-# For a larger application, you would replace this with a database like Redis.
-tasks = {}
 
 @app.route("/api/run-feedback", methods=["POST"])
 def start_feedback_task():
     """
     API endpoint to start a new feedback automation task.
-    It expects 'rollno', 'password', and 'feedback_type' in the JSON body.
+    Enqueues the task to Redis Queue instead of running it directly.
     """
     data = request.get_json()
+    
+    # Validate required fields
     if not all(key in data for key in ['rollno', 'password', 'feedback_type']):
-        return jsonify({"error": "Missing required data: rollno, password, and feedback_type"}), 400
+        return jsonify({
+            "error": "Missing required data: rollno, password, and feedback_type"
+        }), 400
 
     rollno = data['rollno']
     password = data['password']
     feedback_type = int(data['feedback_type'])
     
-    # Generate a unique ID for this task
-    task_id = str(uuid.uuid4())
-    
-    # Create a queue to get progress updates from the Selenium script
-    status_queue = queue.Queue()
-    
-    tasks[task_id] = {"status": "starting", "progress": 0, "message": "Task is initializing...", "queue": status_queue}
+    try:
+        # Enqueue the task to Redis Queue
+        job = feedback_queue.enqueue(
+            run_feedback_automation,
+            feedback_type,
+            rollno,
+            password,
+            None,  # status_queue not needed with RQ
+            job_timeout='10m',  # Max 10 minutes per task
+            result_ttl=3600,    # Keep result for 1 hour
+            failure_ttl=3600    # Keep failed job info for 1 hour
+        )
+        
+        return jsonify({
+            "status": "Task queued successfully",
+            "task_id": job.id,
+            "position": len(feedback_queue)  # Queue position
+        }), 202
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Failed to queue task: {str(e)}"
+        }), 500
 
-    # Define the target function for our background thread
-    def automation_task():
-        try:
-            run_feedback_automation(feedback_type, rollno, password, status_queue)
-        except Exception as e:
-            # If the script fails catastrophically, put an error in the queue
-            status_queue.put({"status": "error", "message": f"A critical error occurred: {e}"})
-
-    # Start the Selenium task in a background thread
-    thread = Thread(target=automation_task)
-    thread.daemon = True  # Allows main app to exit even if threads are running
-    thread.start()
-
-    # Immediately return the task_id so the client can start polling for status
-    return jsonify({"status": "Task started successfully", "task_id": task_id}), 202
 
 @app.route("/api/status/<task_id>", methods=["GET"])
 def get_task_status(task_id):
     """
-    API endpoint for the client to poll for status updates.
+    API endpoint to check the status of a queued task.
     """
-    if task_id not in tasks:
-        return jsonify({"error": "Invalid task ID"}), 404
-
-    task = tasks[task_id]
-    
     try:
-        # Check for the latest update from the queue without blocking
-        update = task["queue"].get_nowait()
-        task["status"] = update["status"]
-        if "progress" in update:
-            task["progress"] = update["progress"]
-        if "message" in update:
-            task["message"] = update["message"]
+        job = Job.fetch(task_id, connection=redis_conn)
+        
+        # Map RQ job status to your frontend's expected format
+        if job.is_finished:
+            return jsonify({
+                "task_id": task_id,
+                "status": "done",
+                "progress": 100,
+                "message": "Feedback submitted successfully!",
+                "result": job.result
+            })
+        
+        elif job.is_failed:
+            return jsonify({
+                "task_id": task_id,
+                "status": "error",
+                "progress": 0,
+                "message": f"Task failed: {job.exc_info}",
+                "error": str(job.exc_info)
+            })
+        
+        elif job.is_started:
+            # Job is currently being processed
+            return jsonify({
+                "task_id": task_id,
+                "status": "running",
+                "progress": 50,  # Mid-progress since we can't track granularly
+                "message": "Processing feedback automation..."
+            })
+        
+        elif job.is_queued:
+            # Job is waiting in queue
+            position = job.get_position()
+            return jsonify({
+                "task_id": task_id,
+                "status": "queued",
+                "progress": 10,
+                "message": f"Waiting in queue (position: {position + 1})",
+                "queue_position": position + 1 if position is not None else None
+            })
+        
+        else:
+            # Job is scheduled or deferred
+            return jsonify({
+                "task_id": task_id,
+                "status": "pending",
+                "progress": 0,
+                "message": "Task is scheduled"
+            })
+    
+    except Exception as e:
+        return jsonify({
+            "error": f"Task not found or invalid task ID: {str(e)}"
+        }), 404
 
-        # If the task is finished, remove it after a short delay
-        # to ensure the client gets the final status.
-        if update["status"] in ["done", "error"]:
-             # In a real app, you might use a cleanup job for this
-             pass
+
+@app.route("/api/queue-stats", methods=["GET"])
+def get_queue_stats():
+    """
+    Optional endpoint to check queue health and statistics.
+    """
+    try:
+        return jsonify({
+            "queued_jobs": len(feedback_queue),
+            "failed_jobs": len(feedback_queue.failed_job_registry),
+            "finished_jobs": len(feedback_queue.finished_job_registry),
+            "started_jobs": len(feedback_queue.started_job_registry)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-    except queue.Empty:
-        # No new update from the queue, just return the last known status
-        pass
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """
+    Health check endpoint to verify Redis connection.
+    """
+    try:
+        redis_conn.ping()
+        return jsonify({"status": "healthy", "redis": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "redis": str(e)}), 500
 
-    return jsonify({
-        "task_id": task_id,
-        "status": task["status"],
-        "progress": task.get("progress", 0),
-        "message": task.get("message", "")
-    })
 
 if __name__ == "__main__":
-    # Use 0.0.0.0 to make it accessible within the Docker container
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080, debug=True)
