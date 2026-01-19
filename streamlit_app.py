@@ -24,6 +24,8 @@ if 'teachers' not in st.session_state:
     st.session_state.teachers = []
 if 'feedback_choices' not in st.session_state:
     st.session_state.feedback_choices = {}
+if 'feedback_mode' not in st.session_state:
+    st.session_state.feedback_mode = "quick"  # "quick" or "custom"
 
 
 def create_driver():
@@ -157,8 +159,8 @@ def submit_endsem_feedback(browser, wait, choices, progress_bar, status_text):
         
         # Get user's choice for this teacher (default to good)
         rating = choices.get(course_name, "good")
-        # Good = stars 4-5 (labels 1-2), Bad = stars 1-2 (labels 4-5)
-        star_range = (1, 2) if rating == "good" else (4, 5)
+        # Quick/Good = stars 4-5 (labels 1-2), Bad = stars 1-2 (labels 4-5)
+        star_range = (1, 2) if rating in ["good", "quick"] else (4, 5)
         
         progress = 25 + int(65 * (i / num_staff))
         progress_bar.progress(progress)
@@ -190,10 +192,15 @@ def get_option_for_question(question_num, rating, num_options):
     Get the appropriate option for each question based on rating.
     
     Question mapping:
+    - "quick" mode: Always option 1 for all questions
     - Q1-3, Q7: Self-assessment (always option 1 - positive)
     - Q4: Self-assessment reversed (Good→last, Bad→1)
     - Q5, Q6, Q8-11: Teacher-related (Good→1, Bad→last)
     """
+    # Quick mode: always option 1
+    if rating == "quick":
+        return 1
+    
     if rating == "good":
         if question_num == 4:
             return num_options  # For good feedback, blame yourself (last option)
@@ -299,25 +306,41 @@ if st.session_state.step == 1:
             st.rerun()
 
 elif st.session_state.step == 2:
-    # Step 2: Select feedback for each teacher
-    st.subheader("Step 2: Select Feedback for Each Teacher")
-    st.markdown("Choose **Good 👍** or **Bad 👎** for each teacher:")
+    # Step 2: Select feedback mode and teachers
+    st.subheader("Step 2: Select Feedback Mode")
     
-    st.markdown("---")
+    # Feedback mode toggle
+    mode = st.radio(
+        "Choose your feedback mode:",
+        options=["quick", "custom"],
+        format_func=lambda x: "⚡ Quick Mode (Always Option 1)" if x == "quick" else "🎯 Custom Mode (Good/Bad per teacher)",
+        key="mode_select",
+        horizontal=True
+    )
+    st.session_state.feedback_mode = mode
     
-    for i, teacher in enumerate(st.session_state.teachers):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(f"**{teacher['name']}**")
-        with col2:
-            choice = st.selectbox(
-                f"Rating for {teacher['name']}",
-                options=["good", "bad"],
-                format_func=lambda x: "👍 Good" if x == "good" else "👎 Bad",
-                key=f"choice_{i}",
-                label_visibility="collapsed"
-            )
-            st.session_state.feedback_choices[teacher['name']] = choice
+    if mode == "quick":
+        st.info("💡 Quick Mode will select **Option 1** for all questions for all teachers.")
+        # Set all choices to "good" (which uses option 1)
+        for t in st.session_state.teachers:
+            st.session_state.feedback_choices[t['name']] = "quick"
+    else:
+        st.markdown("Choose **Good 👍** or **Bad 👎** for each teacher:")
+        st.markdown("---")
+        
+        for i, teacher in enumerate(st.session_state.teachers):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**{teacher['name']}**")
+            with col2:
+                choice = st.selectbox(
+                    f"Rating for {teacher['name']}",
+                    options=["good", "bad"],
+                    format_func=lambda x: "👍 Good" if x == "good" else "👎 Bad",
+                    key=f"choice_{i}",
+                    label_visibility="collapsed"
+                )
+                st.session_state.feedback_choices[teacher['name']] = choice
     
     st.markdown("---")
     
@@ -327,6 +350,7 @@ elif st.session_state.step == 2:
             st.session_state.step = 1
             st.session_state.teachers = []
             st.session_state.feedback_choices = {}
+            st.session_state.feedback_mode = "quick"
             st.rerun()
     with col2:
         if st.button("🚀 Submit Feedback", type="primary", use_container_width=True):
