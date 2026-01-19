@@ -1,4 +1,2 @@
-Flask
-Flask-Cors
-gunicorn
+streamlit
 selenium
