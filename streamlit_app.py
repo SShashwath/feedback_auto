@@ -185,10 +185,48 @@ def submit_endsem_feedback(browser, wait, choices, progress_bar, status_text):
     browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", final_submit_button)
 
 
+def get_option_for_question(question_num, rating, num_options):
+    """
+    Get the appropriate option for each question based on rating.
+    
+    Question mapping:
+    - Q1-3, Q7: Self-assessment (always option 1 - positive)
+    - Q4: Self-assessment reversed (Good→last, Bad→1)
+    - Q5, Q6, Q8-11: Teacher-related (Good→1, Bad→last)
+    """
+    if rating == "good":
+        if question_num == 4:
+            return num_options  # For good feedback, blame yourself (last option)
+        else:
+            return 1  # First option for all others
+    else:  # bad
+        if question_num in [1, 2, 3, 7]:
+            return 1  # Self-assessment: still pick positive (option 1)
+        elif question_num == 4:
+            return 1  # Blame course (need more time)
+        else:  # Q5, Q6, Q8, Q9, Q10, Q11 - teacher related
+            return num_options  # Last option (Disagree/Inadequate)
+
+
 def submit_intermediate_feedback(browser, wait, choices, progress_bar, status_text):
-    """Submit intermediate feedback with user choices."""
+    """Submit intermediate feedback with user choices using smart question mapping."""
     courses = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "intermediate-body")))
     num_courses = len(courses)
+
+    # Number of options per question (based on observed form)
+    question_options = {
+        1: 2,   # Strongly agree, Agree
+        2: 3,   # >85%, 75-85%, <75%
+        3: 4,   # 4 learning options
+        4: 2,   # need time, lack of prep
+        5: 3,   # Strongly agree, Agree, Disagree
+        6: 3,   # Adequate, Inadequate, Too much
+        7: 3,   # Strongly agree, Agree, Disagree
+        8: 3,   # Strongly agree, Agree, Disagree
+        9: 3,   # Strongly agree, Agree, Disagree
+        10: 3,  # Strongly agree, Agree, Disagree
+        11: 3,  # Strongly agree, Agree, Disagree
+    }
 
     for i in range(num_courses):
         courses = browser.find_elements(By.CLASS_NAME, "intermediate-body")
@@ -197,8 +235,6 @@ def submit_intermediate_feedback(browser, wait, choices, progress_bar, status_te
         
         # Get user's choice (default to good)
         rating = choices.get(course_name, "good")
-        # Good = option 1, Bad = option 5
-        option = 1 if rating == "good" else 5
         
         progress = 25 + int(65 * (i / num_courses))
         progress_bar.progress(progress)
@@ -211,7 +247,11 @@ def submit_intermediate_feedback(browser, wait, choices, progress_bar, status_te
         clicks = 0
         while clicks < questions:
             try:
-                radio_button = wait.until(EC.element_to_be_clickable((By.XPATH, f"//label[@for='radio-{clicks + 1}-{option}']")))
+                question_num = clicks + 1
+                num_options = question_options.get(question_num, 3)  # Default to 3 options
+                option = get_option_for_question(question_num, rating, num_options)
+                
+                radio_button = wait.until(EC.element_to_be_clickable((By.XPATH, f"//label[@for='radio-{question_num}-{option}']")))
                 browser.execute_script("arguments[0].click();", radio_button)
                 next_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@class='carousel-control-next']")))
                 browser.execute_script("arguments[0].click();", next_button)
