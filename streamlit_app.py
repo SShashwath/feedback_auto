@@ -289,9 +289,9 @@ if st.session_state.step == 1:
             st.error(f"❌ {error}")
         elif teachers:
             st.session_state.teachers = teachers
-            st.session_state.rollno = rollno
-            st.session_state.password = password
-            st.session_state.feedback_type = feedback_type[1]
+            st.session_state.stored_rollno = rollno
+            st.session_state.stored_password = password
+            st.session_state.stored_feedback_type = feedback_type[1]
             # Initialize all to "good" by default
             for t in teachers:
                 st.session_state.feedback_choices[t['name']] = "good"
@@ -334,9 +334,9 @@ elif st.session_state.step == 2:
             status_text = st.empty()
             
             success = submit_feedback(
-                st.session_state.rollno,
-                st.session_state.password,
-                st.session_state.feedback_type,
+                st.session_state.stored_rollno,
+                st.session_state.stored_password,
+                st.session_state.stored_feedback_type,
                 st.session_state.feedback_choices,
                 progress_bar,
                 status_text
