@@ -62,12 +62,18 @@ def intermediate_form(browser, progress_bar, status_text):
         clicks = 0
         while clicks < questions:
             try:
-                radio_button = wait.until(EC.element_to_be_clickable((By.XPATH, f"//label[@for='radio-{clicks + 1}-1']")))
+                time.sleep(0.5)  # Wait for carousel to slide in
+                radio_button = wait.until(EC.presence_of_element_located((By.XPATH, f"//label[@for='radio-{clicks + 1}-1']")))
+                
+                # Double click the option to ensure it's selected properly
                 browser.execute_script("arguments[0].click();", radio_button)
-                next_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@class='carousel-control-next']")))
+                time.sleep(0.3)
+                browser.execute_script("arguments[0].click();", radio_button)
+                time.sleep(0.5)  # Wait for API to auto-save the selected option
+                
+                next_button = wait.until(EC.presence_of_element_located((By.XPATH, "//button[@class='carousel-control-next']")))
                 browser.execute_script("arguments[0].click();", next_button)
                 clicks += 1
-                time.sleep(0.2)
             except StaleElementReferenceException:
                 continue
         back_button = browser.find_element(By.CLASS_NAME, "overlay")
@@ -92,10 +98,17 @@ def endsem_form(browser, progress_bar, status_text):
         
         browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", staff_list[i])
         wait.until(EC.presence_of_element_located((By.ID, "feedbackTableBody")))
-        review_list = browser.find_elements(By.CSS_SELECTOR, "td.question-cell")
-        for count in range(1, len(review_list) + 1):
-            star_button = browser.find_element(By.XPATH, f"//tbody[@id='feedbackTableBody']/tr[{count}]/td[@class='rating-cell']/div[@class='star-rating']/label[{randint(1, 2)}]")
+        
+        # Directly find all star rating groups to ensure we don't skip any questions
+        # due to mismatched table row counts or missing 'question-cell' classes.
+        star_groups = browser.find_elements(By.CSS_SELECTOR, "#feedbackTableBody .star-rating")
+        for star_group in star_groups:
+            star_button = star_group.find_element(By.XPATH, f"./label[{randint(1, 2)}]")
+            
+            # Click the option twice to ensure it registers properly
             browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", star_button)
+            time.sleep(0.2)
+            browser.execute_script("arguments[0].click()", star_button)
         submit_button = browser.find_element(By.ID, "btnSave")
         browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", submit_button)
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "img.img-fluid")))
