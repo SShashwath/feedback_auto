@@ -1,14 +1,14 @@
 import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException
 from random import randint
 import time
 
+# Page Configuration
 st.set_page_config(
     page_title="Feedback Automation",
     page_icon="📝",
@@ -27,169 +27,155 @@ feedback_type = st.selectbox(
     format_func=lambda x: x[0]
 )
 
-def create_driver():
-    """Sets up Selenium WebDriver for Streamlit Cloud (uses Chromium)."""
-    options = Options()
+def createDriver():
+    # Set up Selenium Chrome options
+    options = webdriver.ChromeOptions()
+    options.binary_location = "/usr/bin/chromium"
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    options.binary_location = "/usr/bin/chromium"
-    
+    options.add_argument("--disable-gpu")
+
+    # Start WebDriver
     service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
+    
     return driver
 
+def intermediateForm(browser):
+    progress_bar = st.progress(0, text="Fetching feedback page...")
+    
+    # Get the courses
+    courses = browser.find_elements(By.CLASS_NAME, "intermediate-body")
 
-def intermediate_form(browser, progress_bar, status_text):
+    if len(courses) == 0:
+        progress_bar.empty()
+        st.warning("No intermediate feedback courses found.")
+        browser.quit()
+        return
+    
+    # Instantiate a wait sequence for page rendering
     wait = WebDriverWait(browser, 10)
-    courses = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "intermediate-body")))
-    if not courses:
-        raise Exception("No intermediate feedback courses found.")
-
-    num_courses = len(courses)
-    for i in range(num_courses):
+    
+    # Iterate through the courses
+    for course in range(len(courses)):
         courses = browser.find_elements(By.CLASS_NAME, "intermediate-body")
         course_names = browser.find_elements(By.CSS_SELECTOR, "h6.course")
-        progress = 30 + int(60 * (i / num_courses))
-        progress_bar.progress(progress)
-        status_text.text(f"Processing: {course_names[i].text}")
+        progress_bar.progress((course)/len(courses), text=course_names[course].text + "...")  
+        browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click();", courses[course])
         
-        browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click();", courses[i])
-        questions_text = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.bottom-0"))).text
+        questions_text = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.bottom-0"))).text
         questions = int(questions_text.split()[-1])
+        
         clicks = 0
         while clicks < questions:
             try:
-                time.sleep(0.5)  # Wait for carousel to slide in
-                radio_button = wait.until(EC.presence_of_element_located((By.XPATH, f"//label[@for='radio-{clicks + 1}-1']")))
-                
-                # Double click the option to ensure it's selected properly
+                radio_button = wait.until(EC.element_to_be_clickable((By.XPATH, f"//label[@for='radio-{clicks+1}-1']")))
                 browser.execute_script("arguments[0].click();", radio_button)
-                time.sleep(0.3)
-                browser.execute_script("arguments[0].click();", radio_button)
-                time.sleep(0.5)  # Wait for API to auto-save the selected option
-                
-                next_button = wait.until(EC.presence_of_element_located((By.XPATH, "//button[@class='carousel-control-next']")))
-                browser.execute_script("arguments[0].click();", next_button)
                 clicks += 1
+                next_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[@class='carousel-control-next']")))
+                browser.execute_script("arguments[0].click();", next_btn)
             except StaleElementReferenceException:
                 continue
-        back_button = browser.find_element(By.CLASS_NAME, "overlay")
-        browser.execute_script("arguments[0].click();", back_button)
-        time.sleep(0.5)
-
-
-def endsem_form(browser, progress_bar, status_text):
-    wait = WebDriverWait(browser, 15)
-    try:
-        staff_list = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.staff-item")))
-    except TimeoutException:
-        raise Exception("Could not find the list of staff for feedback.")
-
-    num_staff = len(staff_list)
-    for i in range(num_staff):
-        staff_list = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.staff-item")))
-        course_name = staff_list[i].find_element(By.CSS_SELECTOR, "span.ms-1").text
-        progress = 30 + int(60 * (i / num_staff))
-        progress_bar.progress(progress)
-        status_text.text(f"Processing: {course_name}")
-        
-        browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", staff_list[i])
-        wait.until(EC.presence_of_element_located((By.ID, "feedbackTableBody")))
-        
-        # Directly find all star rating groups to ensure we don't skip any questions
-        # due to mismatched table row counts or missing 'question-cell' classes.
-        star_groups = browser.find_elements(By.CSS_SELECTOR, "#feedbackTableBody .star-rating")
-        for star_group in star_groups:
-            star_button = star_group.find_element(By.XPATH, f"./label[{randint(1, 2)}]")
             
-            # Click the option twice to ensure it registers properly
-            browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", star_button)
-            time.sleep(0.2)
-            browser.execute_script("arguments[0].click()", star_button)
-        submit_button = browser.find_element(By.ID, "btnSave")
-        browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", submit_button)
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "img.img-fluid")))
-        time.sleep(1)
+        back = browser.find_element(By.CLASS_NAME, "overlay")
+        progress_bar.progress((course+1)/len(courses), text=course_names[course].text + "...")
+        browser.execute_script("arguments[0].click();", back)
+    
+    browser.quit()
+    progress_bar.empty()
+    st.markdown("##### Done! Check your [studzone](https://ecampus.psgtech.ac.in/studzone)!")
 
-    progress_bar.progress(95)
-    status_text.text("Finalizing submission...")
-    final_submit_button = wait.until(EC.element_to_be_clickable((By.ID, "btnFinalSubmit")))
-    browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click()", final_submit_button)
-
-
-def run_automation(index, rollno, password, progress_bar, status_text):
-    """Main automation function."""
-    browser = None
+def endsemForm(browser):
+    progress_bar = st.progress(0, text="Fetching feedback page...")
+    
+    wait = WebDriverWait(browser, 10)
     try:
-        progress_bar.progress(0)
-        status_text.text("Initializing browser...")
-        browser = create_driver()
-        wait = WebDriverWait(browser, 20)
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.staff-item")))
+    except:
+        browser.quit()
+        st.error("Could not find the list of staff for feedback.")
+        return
+        
+    staffList = browser.find_elements(By.CSS_SELECTOR, "div.staff-item")
+    
+    for staff in range(len(staffList)):
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.staff-item")))
+        staffList = browser.find_elements(By.CSS_SELECTOR, "div.staff-item")
+        browser.execute_script("arguments[0].scrollIntoView();arguments[0].click()", staffList[staff])
+        
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "span.ms-1")))
+        course_name = browser.find_elements(By.CSS_SELECTOR, "span.ms-1")[1].text
+        progress_bar.progress((staff/len(staffList)), text=course_name + "...")
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//tbody[@id='feedbackTableBody']/tr[1]/td[@class='rating-cell']/div[@class='star-rating']/label[1]")))
+        
+        review_list = browser.find_elements(By.CSS_SELECTOR, "td.question-cell")
+        for count in range(1, len(review_list) + 1):
+            star_button = browser.find_element(By.XPATH, f"//tbody[@id='feedbackTableBody']/tr[{count}]/td[@class='rating-cell']/div[@class='star-rating']/label[{randint(1,2)}]")
+            browser.execute_script("arguments[0].scrollIntoView();arguments[0].click()", star_button)
+        
+        submit_button = browser.find_element(By.ID, "btnSave")
+        browser.execute_script("arguments[0].scrollIntoView();arguments[0].click()", submit_button)
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "img.img-fluid")))
+        progress_bar.progress(((staff+1)/len(staffList)), text=course_name + "...")
+        time.sleep(1) # Small delay between submissions
+        
+    final_submit_button = browser.find_element(By.ID, "btnFinalSubmit")
+    browser.execute_script("arguments[0].scrollIntoView();arguments[0].click()", final_submit_button)
+    
+    browser.quit()
+    progress_bar.empty()
+    st.markdown("##### Done! Check your [studzone](https://ecampus.psgtech.ac.in/studzone)!")
 
-        progress_bar.progress(5)
-        status_text.text("Accessing login page...")
+def autoFeedback(index, rollno, password):
+    # Create a webdriver
+    progress_bar = st.progress(0, text="Fetching feedback page...")
+    browser = createDriver()
+    wait = WebDriverWait(browser, 10)
+    
+    try:
         browser.get("https://ecampus.psgtech.ac.in/studzone")
-
-        progress_bar.progress(10)
-        status_text.text("Entering credentials...")
+        
+        # Fill out the credentials
         rollno_field = wait.until(EC.presence_of_element_located((By.ID, "rollno")))
         rollno_field.send_keys(rollno)
+
         password_field = browser.find_element(By.ID, "password")
         password_field.send_keys(password)
+
         checkbox = browser.find_element(By.ID, "terms")
         browser.execute_script("arguments[0].click();", checkbox)
+
         login_button = browser.find_element(By.ID, "btnLogin")
         browser.execute_script("arguments[0].click();", login_button)
-
-        progress_bar.progress(20)
-        status_text.text("Navigating to feedback section...")
+        
+        # Get the feedback index page
         feedback_card = wait.until(EC.element_to_be_clickable((By.XPATH, f"//h5[text()='Feedback']")))
-        browser.execute_script("arguments[0].scrollIntoView(); arguments[0].click();", feedback_card)
-
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "card-body")))
+        browser.execute_script("arguments[0].scrollIntoView();arguments[0].click();", feedback_card)
+        
+        wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "card-body")))
         feedbacks = browser.find_elements(By.CLASS_NAME, "card-body")
         
-        progress_bar.progress(30)
-        status_text.text("Selecting feedback form...")
+        # Click the desired feedback
         browser.execute_script("arguments[0].click();", feedbacks[index])
         
+        progress_bar.empty()
         if index == 0:
-            endsem_form(browser, progress_bar, status_text)
+            endsemForm(browser)
         else:
-            intermediate_form(browser, progress_bar, status_text)
-            
-        progress_bar.progress(100)
-        status_text.text("✅ Feedback submitted successfully!")
+            intermediateForm(browser)
         return True
-
-    except TimeoutException as e:
-        status_text.text(f"❌ Error: Page or element not found. Check credentials.")
-        return False
     except Exception as e:
-        status_text.text(f"❌ Error: {str(e)}")
-        return False
-    finally:
         if browser:
             browser.quit()
+        st.error(f"❌ Automation Error: {str(e)}")
+        return False
 
-
-# Submit button
+# Submit button logic
 if st.button("🚀 Submit Feedback", type="primary", disabled=not (rollno and password)):
-    if not rollno or not password:
-        st.error("Please enter both roll number and password")
-    else:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        with st.spinner("Running automation..."):
-            success = run_automation(feedback_type[1], rollno, password, progress_bar, status_text)
-        
-        if success:
-            st.success("🎉 Feedback submitted successfully!")
-            st.balloons()
+    with st.spinner("Running automation..."):
+        autoFeedback(feedback_type[1], rollno, password)
 
 st.markdown("---")
 st.caption("⚠️ This tool is for educational purposes only. Use responsibly.")
